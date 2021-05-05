@@ -25,11 +25,11 @@ socket.render = (path, html, locals) => {
         title: `Soxy » ${locals?.title}` || null,
         html: html,
     }
-
+    if(path === '/') renderState.path = '';
     if(firstRender)
-        history.replaceState(renderState, renderState.title, '#!/' + renderState.path === '/' ? '' : renderState.path)
+        history.replaceState(renderState, renderState.title, '/#!/' + renderState.path)
     else
-        history.pushState(renderState, renderState.title, '#!/' + renderState.path === '/' ? '' : renderState.path)
+        history.pushState(renderState, renderState.title, '#!/' + renderState.path)
     firstRender = false
 
     document.title = renderState.title;

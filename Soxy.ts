@@ -7,39 +7,39 @@ import http from 'http'
 import path from 'path'
 import pug from 'pug'
 import fs from 'fs'
-
+ 
 let fsTimeout : any;
-
+ 
 export class Soxy extends EventEmitter2 {
-
+ 
     public static instance: Soxy
     public static database: PrismaClient
     public static webserver: Express
     public static http: http.Server
     public static sockets: Sockets
     public static router: Router
-
+ 
     public static listen(port: number = 1337, cb: any) {
         if (!Soxy.instance) {
             this.instance  = new Soxy()
-
+ 
             this.database  = new PrismaClient()
             this.webserver = express();
             this.http      = http.createServer(this.webserver)
             this.sockets   = new Sockets(this.http)
             this.router    = new Router()
-
+ 
             // Use pug as view engine
             this.webserver.set('view engine', 'pug');
             this.webserver.set('views', path.join(process.cwd(), 'ui/page'));
-
+ 
             // Decode x-www-form-urlencoded & JSON bodies.
             this.webserver.use(express.json());
             this.webserver.use(express.urlencoded({ extended: true }));
-
+ 
             // Static assets (CSS/JS/Images)
             this.webserver.use('/assets', express.static(path.join(process.cwd(), 'public')));
-
+ 
             // Make sure to attach cookie/session to incoming sockets.
             this.sockets.use(async(socket: Socket, next) => {
                 const cookie  = Soxy.Cookie(socket.request?.headers?.cookie?.toString() || '');
@@ -48,40 +48,46 @@ export class Soxy extends EventEmitter2 {
                     if(session) next()
                 } catch(error) {}
             })
-
+ 
             // Attach render method to incoming sockets
             this.sockets.on('connection', (socket: Socket) => {
                 const session  = socket.session;
-    
+ 
                 socket.render = async(route, locals?) => {
                     let file = route;
                     if(route === '/') file = 'index'
-    
+                    console.log(file)
+ 
                     let start       = Date.now()
                     socket.route    = route
                     locals.session  = socket.session
-    
+ 
                     socket.emit('render', route, await Router.render(file, locals, socket), locals)
                     console.log(`${session.id} rendered ${route} in ${Date.now()-start}ms`)
                 }
                 // Listen for navigation
                 socket.on('soxy:navigate', (path) => this.router.emit(path, socket))
-    
+ 
             })
-
+ 
+            Router.watch('.', (route) => {
+                console.log(route)
+                Router.render(route)
+            })
+ 
             // Express main app
             this.webserver.get('/', this.app)
-
+ 
             // Webserver listen
             this.http.listen(port, () => {
                 console.log(`Soxy instance listening at http://localhost:${port}/`)
                 if(typeof cb === 'function') cb(port)
             })
-
+ 
         }
         return this.instance;
     }
-
+ 
     /**
      * Parse Cookies
      * @param c request.headers.cookie
@@ -93,7 +99,7 @@ export class Soxy extends EventEmitter2 {
             cookie[cl.split('=')[0].trim()] = cl.split('=')[1])
         return cookie;
     }
-
+ 
     /**
      * 
      * @param req Express Request
@@ -124,7 +130,7 @@ export class Soxy extends EventEmitter2 {
             })
         }
     }
-
+ 
     /**
      * Soxy main application
      * @param req  Express Request
@@ -138,24 +144,24 @@ export class Soxy extends EventEmitter2 {
             res.cookie('Soxy', '', {maxAge: 0})
             res.redirect('/');
         }
-
+ 
         res.render('../layout/app')  
-        
+ 
     }
 }
-
+ 
 export interface Socket extends Client {
     session: Session;
     render: any;
     route: string;
 }
-
+ 
 export class Router extends EventEmitter2 {
-
+ 
     constructor() { 
         super()
     }
-
+ 
     public static watch(uiPath: string, listener: any) {
         // TODO: Swap fs for chokidar or something else.
         const customListener = async(event: string, filename: string) => {
@@ -166,17 +172,22 @@ export class Router extends EventEmitter2 {
         } 
         return fs.watch('./ui/page/'+uiPath, customListener)
     }
-
+ 
     static compiler(file: string, options: any = {}) {
         return pug.compileFile(file, options)
     }
-
+ 
     static async render(route: string, locals?: any, socket?: Socket) {
         let compiler, template = path.join('./ui/page', route + '.pug');
         if(!socket) {
-            const sockets : Socket[] =  <unknown>await Soxy.sockets as Socket[];
-                for(const socket of sockets) 
-                    if(socket?.route === route) socket.emit('redraw');
+            const sockets : Socket[] = <unknown>await Soxy.sockets.fetchSockets() as Socket[];
+                for(const socket of sockets) {
+                    console.log(`${socket.id} is at ${socket?.route}`)
+                    if( socket?.route === route
+                        || (route === 'index' && socket.route === '/')
+                        || !socket.route) 
+                        socket.emit('redraw');
+                }
         } else {
             try {
                 compiler = this.compiler(template);
@@ -191,5 +202,5 @@ export class Router extends EventEmitter2 {
             }
         }
     }
-
+ 
 }
