@@ -46,9 +46,7 @@ export class Soxy extends EventEmitter2 {
                 const session = socket.session = await this.Session(<Request>socket.request, cookie);
                 try {        
                     if(session) next()
-                } catch(error) {
-                    next(error);
-                }
+                } catch(error) {}
             })
 
             // Attach render method to incoming sockets
@@ -63,7 +61,7 @@ export class Soxy extends EventEmitter2 {
                     socket.route    = route
                     locals.session  = socket.session
     
-                    socket.emit('render', route, await Router.render(socket, file, locals), locals)
+                    socket.emit('render', route, await Router.render(file, locals, socket), locals)
                     console.log(`${session.id} rendered ${route} in ${Date.now()-start}ms`)
                 }
                 // Listen for navigation
@@ -133,10 +131,16 @@ export class Soxy extends EventEmitter2 {
      * @param req  Express Response
      * @param next Express NextFunction
      */
-    public static async app(req: Request, res: Response, next: NextFunction) {
-        const cookie = this.Cookie(req?.headers?.cookie?.toString() || '');
-        const session = await this.Session(req, cookie, res);
+    static async app(req: Request, res: Response, next: NextFunction) {
+        const cookie = Soxy.Cookie(req?.headers?.cookie?.toString() || '');
+        const session = await Soxy.Session(req, cookie, res);
+        if(!session) {
+            res.cookie('Soxy', '', {maxAge: 0})
+            res.redirect('/');
+        }
+
         res.render('../layout/app')  
+        
     }
 }
 
@@ -153,6 +157,7 @@ export class Router extends EventEmitter2 {
     }
 
     public static watch(uiPath: string, listener: any) {
+        // TODO: Swap fs for chokidar or something else.
         const customListener = async(event: string, filename: string) => {
             if(event === 'change' && typeof listener === 'function' && !fsTimeout) {
                 listener(filename.split('.pug')[0]);
@@ -166,24 +171,25 @@ export class Router extends EventEmitter2 {
         return pug.compileFile(file, options)
     }
 
-    static async rerender(path: string) {
-        const sockets : Socket[] =  <unknown>await Soxy.sockets as Socket[];
-        for(const socket of sockets) 
-            if(socket?.route === path) socket.emit('redraw');
-    }
-
-    static async render(socket: Socket, file: string, locals: any = {}) {
-        let compiler:any, template = path.join('./ui/page', file + '.pug');
-        try {
-            compiler = this.compiler(template, {});
-        } catch(error) {
-            console.log(`${socket.session.id} encountered an error in ${file}`)
-            console.log(error?.stack || error)
-            template = path.join('./ui/layout/error.pug');
-            compiler  = this.compiler(template, {});
-            locals = { title: `Error`, error: { title: `Failed to render view`, text: error.toString() }}
-        } finally {
-            return compiler(locals);
+    static async render(route: string, locals?: any, socket?: Socket) {
+        let compiler, template = path.join('./ui/page', route + '.pug');
+        if(!socket) {
+            const sockets : Socket[] =  <unknown>await Soxy.sockets as Socket[];
+                for(const socket of sockets) 
+                    if(socket?.route === route) socket.emit('redraw');
+        } else {
+            try {
+                compiler = this.compiler(template);
+            } catch(error) {
+                console.log(`${socket.session.id} encountered an error in ${route}`)
+                console.log(error?.stack || error)
+                template = path.join('./ui/layout/error.pug');
+                compiler  = this.compiler(template);
+                locals = { title: `Error`, error: { title: `Failed to render view`, text: error.toString() }}
+            } finally {
+                return compiler(locals);
+            }
         }
     }
+
 }
